@@ -13,6 +13,16 @@ description: "Use when LLM-generated structured output (JSON, enums, schemas) fa
 - Truncated JSON from multi-step tool-calling agents
 - Repair/retry prompts that don't actually fix the issue
 
+## Core Principle: Fix at the Source, Not Downstream
+
+The correct defense order for LLM structured output:
+
+1. **Prompt layer (source)** — Explicitly require English enum values. Separate "enum values must be English" from "content fields use target language".
+2. **Schema layer (safety net)** — `z.preprocess` as lightweight fallback only (non-English → default), NOT a translation dictionary.
+3. **UI layer (display)** — Map English enums to display language in components (e.g., `bullish` → `看多`).
+
+**Anti-pattern:** Using `z.preprocess` to reverse-map natural language back to enum values (e.g., `"看多" → "bullish"`). This is a downstream patch that grows unbounded and still breaks on unseen variants.
+
 ## Diagnostic Protocol
 
 **Step 1: Save the full raw LLM output to a file for inspection.**
@@ -52,26 +62,31 @@ This distinguishes "missing fields" (truncated JSON) from "wrong values" (enum m
 
 **Symptom:** Zod error `Invalid enum value. Expected 'bullish' | 'bearish' | 'neutral', received '中性偏谨慎'`
 
-**Cause:** The LLM translates enum values to the prompt's language (e.g., Chinese UI prompts produce Chinese enum values).
+**Cause:** The prompt says "所有文字使用中文" (use Chinese for all text) without distinguishing enum values from content. The model faithfully translates enum values too.
 
-**Fix:** Add `z.preprocess` to normalize values:
+**Fix (prompt — primary):** Add an explicit language rule section to the output format prompt:
+
+```
+### 语言规则
+- **枚举值必须使用英文原文**：stance 只能是 "bullish"/"bearish"/"neutral"；
+  state 只能是 "verified"/"contested"/"stale"/"unverified"
+- **内容字段使用中文**：summary, rationale, description 等描述性文字用中文
+```
+
+**Fix (schema — safety net only):** Keep a minimal fallback, not a translation dictionary:
 
 ```ts
+// Prompt enforces English enums; preprocess is safety net only
 stance: z.preprocess(
   (v) => {
     if (typeof v !== "string") return v;
-    const s = v.toLowerCase();
-    // Map natural language to enum values
-    if (s.includes("bullish") || s.includes("看多") || s.includes("乐观")) return "bullish";
-    if (s.includes("bearish") || s.includes("看空") || s.includes("悲观")) return "bearish";
+    const s = v.toLowerCase().trim();
     if (["bullish", "bearish", "neutral"].includes(s)) return s;
-    return "neutral"; // safe default
+    return "neutral"; // fallback for any non-English value
   },
   z.enum(["bullish", "bearish", "neutral"])
 ),
 ```
-
-**Rule:** Any enum field that appears in a multilingual prompt MUST have a preprocess normalizer. LLMs will use the prompt language for values.
 
 ### Pattern 2: Truncated JSON (Missing Closing Markers)
 
@@ -179,9 +194,16 @@ const repair = await generateText({
 
 **Symptom:** Model uses `"high"` when schema expects `"strong"`, or `"medium"` when schema expects `"moderate"`.
 
-**Cause:** The model knows the concept but uses a different word. Especially common when the schema uses domain-specific enum values that differ from common English.
+**Cause:** The model knows the concept but uses a different word. Common when the schema uses domain-specific enum values that differ from standard English (e.g., `strong/moderate/weak` instead of `high/medium/low`).
 
-**Fix:** Map common aliases in preprocess:
+**Fix (prompt — primary):** List exact allowed values in the output format prompt with explicit warnings:
+
+```
+evidenceStrength: "strong" | "moderate" | "weak"（不得用 high/medium/low）
+verdict: "leaning_bull" | "leaning_bear" | "inconclusive"（不得用 bullish/bearish/neutral）
+```
+
+**Fix (schema — safety net):** Map common aliases:
 
 ```ts
 evidenceStrength: z.preprocess(
@@ -194,7 +216,8 @@ evidenceStrength: z.preprocess(
 
 When defining a Zod schema for LLM output:
 
-- [ ] **Every enum field** has a `z.preprocess` that maps common aliases and natural language equivalents
+- [ ] **Prompt explicitly lists all enum values** with a "语言规则" section separating enum values (English) from content (target language)
+- [ ] **Every enum field** has a lightweight `z.preprocess` safety net (non-matching → sensible default)
 - [ ] **Every non-critical string field** (rationale, description, sources) uses `.optional().default("")`
 - [ ] **Every non-critical array field** (gaps, sources, tags) uses `.optional().default([])`
 - [ ] **Numeric fields that might be strings** have `z.preprocess((v) => typeof v === "string" ? parseFloat(v) : v, z.number())`
