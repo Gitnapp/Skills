@@ -153,7 +153,35 @@ curl https://your-app.fly.dev/health/liveliness
 curl https://your-app.fly.dev/v1/models -H "Authorization: Bearer your-master-key"
 ```
 
-### 8. Auto-Import Models from Provider
+### 8. Optional: Zero-Downtime Deploys (Dual Instance)
+
+Deploy two machines so rolling updates keep one running while the other restarts (~60-90s migration time).
+
+Changes to `fly.toml`:
+
+```toml
+[http_service]
+  min_machines_running = 2   # was 1
+
+  [http_service.checks]
+    [http_service.checks.readiness]
+      interval = '10s'
+      timeout = '5s'
+      grace_period = '120s'  # allow time for Prisma migration
+      method = 'GET'
+      path = '/health/readiness'
+```
+
+Rolling deploy flow:
+1. Machine A stays running, receives traffic
+2. Machine B updates → starts → passes readiness check
+3. Machine B receives traffic
+4. Machine A updates → starts → passes readiness check
+5. Both running — zero downtime
+
+**Trade-off:** VM costs double (2x `shared-cpu-1x:2048MB`). Only enable when uptime matters more than cost.
+
+### 9. Auto-Import Models from Provider
 
 To dynamically fetch and import models from an OpenAI-compatible provider:
 
