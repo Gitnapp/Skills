@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Time-Driven Animation Template</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .stage { position: relative; overflow: hidden; }
+  .scrubber {
+    position: fixed; left: 12px; right: 12px; bottom: 12px;
+    display: none; /* shown via ?scrub=1 */
+    align-items: center; gap: 12px;
+    padding: 8px 12px; background: rgba(0,0,0,0.7); border-radius: 8px;
+    color: #fff; font: 12px/1 ui-monospace, monospace; z-index: 9999;
+  }
+  .scrubber input[type=range] { flex: 1; }
+  .scrubber.visible { display: flex; }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <div class="scrubber" id="scrubber">
+    <span id="tLabel">0.00</span>
+    <input type="range" id="scrub" min="0" max="10" step="0.01" value="0">
+    <button id="playBtn">⏸</button>
+  </div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Dependencies — swap to a local bundle for production
+     ═══════════════════════════════════════════════════════════════════ -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     1. tUtil — timing library (copy into any project)
+     ═══════════════════════════════════════════════════════════════════ -->
+<script>
+window.tUtil = {
+  clamp01: (t) => Math.max(0, Math.min(1, t)),
+  lerp: (a, b, t) => a + (b - a) * t,
+  smooth: (t) => { t = Math.max(0, Math.min(1, t)); return t*t*t*(t*(t*6-15)+10); },
+  out: (t) => 1 - (1 - t) * (1 - t),
+  ein: (t) => t * t,
+  back: (t) => {
+    const c1 = 1.70158, c2 = c1 * 1.525;
+    return t < 0.5
+      ? (Math.pow(2*t, 2) * ((c2+1)*2*t - c2)) / 2
+      : (Math.pow(2*t-2, 2) * ((c2+1)*(t*2-2) + c2) + 2) / 2;
+  },
+  phase: (t, start, dur) => {
+    if (dur <= 0) return t >= start ? 1 : 0;
+    return Math.max(0, Math.min(1, (t - start) / dur));
+  },
+  envelope: (t, iS, iD, oS, oD) => {
+    const pin = window.tUtil.phase(t, iS, iD);
+    const pout = window.tUtil.phase(t, oS, oD);
+    return pin * (1 - pout);
+  },
+  track: (frames, t) => {
+    if (t <= frames[0][0]) return frames[0][1];
+    for (let i = 0; i < frames.length - 1; i++) {
+      const [t0, v0] = frames[i], [t1, v1] = frames[i+1];
+      if (t >= t0 && t < t1) {
+        const f = window.tUtil.smooth((t - t0) / (t1 - t0));
+        return v0 + (v1 - v0) * f;
+      }
+    }
+    return frames[frames.length - 1][1];
+  },
+  typed: (text, t, cps = 22) => Math.min(text.length, Math.floor(Math.max(0, t) * cps)),
+};
+</script>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     2. Layer / Stage primitives
+     ═══════════════════════════════════════════════════════════════════ -->
+<script type="text/babel">
+function Layer({ x = 0, y = 0, w, h, scale = 1, opacity = 1, rotation = 0, children, style, el }) {
+  if (opacity <= 0.001) return null;
+  const s = {
+    position: "absolute",
+    left: x + "px",
+    top: y + "px",
+    opacity,
+    transform: `scale(${scale})${rotation ? ` rotate(${rotation}deg)` : ""}`,
+    transformOrigin: "center center",
+    ...(w != null && { width: w + "px" }),
+    ...(h != null && { height: h + "px" }),
+    ...style,
+  };
+  return <div style={s} data-el={el}>{children}</div>;
+}
+
+function Stage({ width, height, children }) {
+  return (
+    <div className="stage" style={{
+      position: "relative",
+      width: width + "px",
+      height: height + "px",
+      overflow: "hidden",
+      background: "#000",
+    }}>{children}</div>
+  );
+}
+
+window.Layer = Layer;
+window.Stage = Stage;
+</script>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     3. Text primitives — RevealText (word stagger) + TypeText
+     ═══════════════════════════════════════════════════════════════════ -->
+<script type="text/babel">
+function RevealText({
+  text, p = 1, q = 0, size = 72, weight = 500,
+  align = "center", stagger = 0.55, serif = false, dark = false,
+}) {
+  const words = React.useMemo(() => text.split(" "), [text]);
+  const n = words.length;
+  const gap = n > 1 ? (1 - stagger) / (n - 1) : 0;
+  const qs = tUtil.smooth(q);
+  const color = dark ? "#FAF9F5" : "#141413";
+  return (
+    <div style={{
+      fontFamily: serif
+        ? "'Georgia', 'Cambria', serif"
+        : "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+      fontSize: size + "px",
+      fontWeight: weight,
+      color,
+      textAlign: align,
+      lineHeight: 1.08,
+      letterSpacing: "-0.02em",
+      opacity: 1 - qs,
+      filter: `blur(${qs * 16}px)`,
+      transform: `translateY(${tUtil.ein(q) * -24}px)`,
+      width: "100%",
+    }}>
+      {words.map((w, i) => {
+        const wp = tUtil.clamp01((p - i * gap) / stagger);
+        const e = tUtil.smooth(wp);
+        return (
+          <span key={i} style={{ display: "inline-block", whiteSpace: "pre" }}>
+            <span style={{
+              display: "inline-block",
+              opacity: e,
+              filter: `blur(${(1 - e) * 8}px)`,
+              transform: `scale(${0.96 + 0.04 * e}) translateY(${(1 - e) * 10}px)`,
+            }}>{w}</span>
+            {i < n - 1 ? " " : ""}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function TypeText({ text, chars, caret = true, size = 72, weight = 500, dark = false, serif = false }) {
+  const shown = text.slice(0, chars);
+  const color = dark ? "#FAF9F5" : "#141413";
+  const [blink, setBlink] = React.useState(true);
+  React.useEffect(() => {
+    const id = setInterval(() => setBlink(b => !b), 500);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div style={{
+      fontFamily: serif ? "'Georgia', serif" : "-apple-system, sans-serif",
+      fontSize: size + "px",
+      fontWeight: weight,
+      color,
+      letterSpacing: "-0.02em",
+      lineHeight: 1.08,
+      textAlign: "center",
+    }}>
+      {shown}
+      {caret && chars < text.length && (
+        <span style={{
+          display: "inline-block",
+          width: "0.06em", height: "1em",
+          background: color,
+          marginLeft: "0.04em",
+          verticalAlign: "-0.1em",
+          opacity: blink ? 1 : 0,
+        }} />
+      )}
+    </div>
+  );
+}
+
+window.RevealText = RevealText;
+window.TypeText = TypeText;
+</script>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     4. CursorDot — waypoint-driven pointer (example primitive)
+     ═══════════════════════════════════════════════════════════════════ -->
+<script type="text/babel">
+function CursorDot({ x, y, scale = 1 }) {
+  return (
+    <div style={{
+      position: "absolute",
+      left: x, top: y,
+      transform: `translate(-2px, -2px) scale(${scale})`,
+      transformOrigin: "top left",
+      pointerEvents: "none",
+      zIndex: 100,
+      filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.25))",
+    }}>
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <path d="M2 2 L2 18 L7 14 L10 22 L13 21 L10 13 L17 13 Z"
+              fill="#fff" stroke="#000" strokeWidth="1.2" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+window.CursorDot = CursorDot;
+</script>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     5. Scenes — one function per scene. Pure functions of (t, t0).
+                Each exposes .computeDur(T) for the timeline cascade.
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<!-- ─── Scene 1: intro typewriter ──────────────────────────────────── -->
+<script type="text/babel">
+function sceneIntro(ctx, t, t0, dur) {
+  const lt = t - t0;
+  if (lt < -0.5 || lt > dur + 0.5) return null;
+
+  const text = "Meet your animation.";
+  const typeDur = 1.4;
+  const holdDur = 1.2;
+  const dismissDur = 0.7;
+
+  const chars = tUtil.typed(text, lt, text.length / typeDur);
+  const dismiss = tUtil.phase(lt, typeDur + holdDur, dismissDur);
+
+  return (
+    <Layer x={0} y={0} w={1280} h={720}>
+      <div style={{
+        position: "absolute", inset: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        opacity: 1 - tUtil.smooth(dismiss),
+        filter: `blur(${tUtil.smooth(dismiss) * 14}px)`,
+        transform: `translateY(${tUtil.ein(dismiss) * -20}px)`,
+      }}>
+        <TypeText text={text} chars={chars} serif size={64} weight={400} />
+      </div>
+    </Layer>
+  );
+}
+sceneIntro.computeDur = () => 1.4 + 1.2 + 0.7;
+window.sceneIntro = sceneIntro;
+</script>
+
+<!-- ─── Scene 2: word reveal + cursor path ─────────────────────────── -->
+<script type="text/babel">
+function sceneReveal(ctx, t, t0, dur) {
+  const lt = t - t0;
+  if (lt < -0.5 || lt > dur + 0.5) return null;
+
+  const revealP = tUtil.phase(lt, 0.3, 2.2);
+  const dismiss = tUtil.phase(lt, dur - 0.6, 0.6);
+
+  // Cursor waypoints: bottom-left → center → top-right
+  const cx = tUtil.track([
+    [0, 100], [1.2, 640], [2.0, 640], [3.0, 1180],
+  ], lt);
+  const cy = tUtil.track([
+    [0, 620], [1.2, 360], [2.0, 360], [3.0, 140],
+  ], lt);
+
+  return (
+    <Layer x={0} y={0} w={1280} h={720}>
+      <div style={{
+        position: "absolute", inset: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: "0 140px",
+      }}>
+        <RevealText
+          text="Every frame is a pure function of one number."
+          p={revealP}
+          q={dismiss}
+          size={56}
+          weight={500}
+        />
+      </div>
+      <CursorDot x={cx} y={cy} scale={1.2} />
+    </Layer>
+  );
+}
+sceneReveal.computeDur = () => 0.3 + 2.2 + 1.0 + 0.6; // reveal + hold + dismiss
+window.sceneReveal = sceneReveal;
+</script>
+
+<!-- ─── Scene 3: outro with word reveal on dark ────────────────────── -->
+<script type="text/babel">
+function sceneOutro(ctx, t, t0, dur) {
+  const lt = t - t0;
+  if (lt < -0.5 || lt > dur + 0.5) return null;
+
+  const p = tUtil.phase(lt, 0.4, 1.6);
+
+  return (
+    <Layer x={0} y={0} w={1280} h={720}>
+      <div style={{
+        position: "absolute", inset: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <RevealText text="Scrub anywhere." p={p} size={84} weight={600} dark />
+      </div>
+    </Layer>
+  );
+}
+sceneOutro.computeDur = () => 0.4 + 1.6 + 1.5; // reveal + hold (stays on last frame)
+window.sceneOutro = sceneOutro;
+</script>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     6. TeaserScene — stitches scenes + background crossfade
+     ═══════════════════════════════════════════════════════════════════ -->
+<script type="text/babel">
+const SCENE_FNS = [sceneIntro, sceneReveal, sceneOutro];
+const SCENE_BG  = ["#E3DACC", "#BCD1CA", "#141413"];
+const FADE = 0.8;
+
+function createTweakCtx(store = {}) {
+  return {
+    num: (k, f) => store[k] ?? f,
+    text: (k, f) => store[k] ?? f,
+    point: (k, f) => store[k] ?? f,
+    bool: (k, f) => store[k] ?? f,
+    el: () => {},
+    manifest: [],
+    __rawStore: store,
+  };
+}
+
+function TeaserScene(ctx, t) {
+  const T = ctx.__rawStore || {};
+  const durs = SCENE_FNS.map(fn => fn.computeDur ? fn.computeDur(T) : 5);
+  const starts = [0];
+  for (let i = 0; i < durs.length; i++) starts.push(starts[i] + durs[i]);
+  const totalDur = starts[durs.length];
+
+  let idx = durs.length - 1;
+  for (let i = 0; i < durs.length; i++) {
+    if (t < starts[i + 1]) { idx = i; break; }
+  }
+  const nextStart = starts[idx + 1] ?? totalDur;
+  const fadeP = tUtil.clamp01((t - (nextStart - FADE)) / FADE);
+
+  return (
+    <>
+      <div style={{ position: "absolute", inset: 0, background: SCENE_BG[idx] }} />
+      {fadeP > 0.001 && idx + 1 < SCENE_BG.length && (
+        <div style={{
+          position: "absolute", inset: 0,
+          background: SCENE_BG[idx + 1],
+          opacity: tUtil.smooth(fadeP),
+        }} />
+      )}
+      {SCENE_FNS.map((fn, i) => (
+        <React.Fragment key={i}>{fn(ctx, t, starts[i], durs[i])}</React.Fragment>
+      ))}
+    </>
+  );
+}
+
+TeaserScene.computeTotalDur = () => {
+  return SCENE_FNS.reduce((s, fn) => s + (fn.computeDur ? fn.computeDur({}) : 5), 0);
+};
+
+window.TeaserScene = TeaserScene;
+window.createTweakCtx = createTweakCtx;
+</script>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     7. Player — RAF loop, scale-to-fit, optional scrubber
+     ═══════════════════════════════════════════════════════════════════ -->
+<script type="text/babel">
+const STAGE_W = 1280;
+const STAGE_H = 720;
+
+function Player() {
+  const { useState, useEffect, useRef } = React;
+
+  const duration = React.useMemo(() => TeaserScene.computeTotalDur(), []);
+  const [t, setT] = useState(0);
+  const tRef = useRef(0);
+  const lastRef = useRef(0);
+  const doneRef = useRef(false);
+  const playingRef = useRef(true);
+
+  const scrubMode = new URLSearchParams(location.search).has("scrub");
+
+  useEffect(() => {
+    if (scrubMode) {
+      document.getElementById("scrubber").classList.add("visible");
+      const input = document.getElementById("scrub");
+      const label = document.getElementById("tLabel");
+      const btn = document.getElementById("playBtn");
+      input.max = duration;
+      input.addEventListener("input", (e) => {
+        tRef.current = parseFloat(e.target.value);
+        setT(tRef.current);
+        label.textContent = tRef.current.toFixed(2);
+      });
+      btn.addEventListener("click", () => {
+        playingRef.current = !playingRef.current;
+        btn.textContent = playingRef.current ? "⏸" : "▶";
+        if (playingRef.current) lastRef.current = performance.now();
+      });
+    }
+
+    lastRef.current = performance.now();
+    let raf;
+    function tick(now) {
+      const dt = Math.min((now - lastRef.current) / 1000, 0.1);
+      lastRef.current = now;
+
+      if (playingRef.current) {
+        let next = tRef.current + dt;
+        if (next >= duration) {
+          next = duration;
+          if (!doneRef.current) {
+            doneRef.current = true;
+            try { window.parent.postMessage({ type: "finished" }, "*"); } catch {}
+          }
+          tRef.current = next;
+          setT(next);
+          if (!scrubMode) return;
+        } else {
+          tRef.current = next;
+          setT(next);
+        }
+        if (scrubMode) {
+          document.getElementById("scrub").value = next;
+          document.getElementById("tLabel").textContent = next.toFixed(2);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [duration, scrubMode]);
+
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    function measure() {
+      setScale(Math.min(window.innerWidth / STAGE_W, window.innerHeight / STAGE_H));
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  const ctx = createTweakCtx({});
+  const tree = TeaserScene(ctx, t);
+
+  return (
+    <div style={{
+      transform: `scale(${scale})`,
+      transformOrigin: "center center",
+      width: STAGE_W + "px",
+      height: STAGE_H + "px",
+    }}>
+      <Stage width={STAGE_W} height={STAGE_H}>{tree}</Stage>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Player />);
+</script>
+
+</body>
+</html>
