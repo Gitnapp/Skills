@@ -53,8 +53,51 @@ cp -r /path/to/source/skills/<skill-name> \
 
 Then run `hermes /reload-skills` to make Hermes pick it up (or start a new session).
 
+## Git Sync Repo: Direct Push Only (No Branches, No PRs)
+
+If the skills directory is a git repo used purely for sync (e.g., Gitnapp/Skills), **never create branches or PRs**. Always commit and push directly to `main`:
+
+```bash
+cd ~/.hermes/profiles/<profile>/skills/<category>
+git add -A .
+git commit -m "..."
+git push origin main
+```
+
+The user's explicit rule: "不要创建分支，不要创建PR，直接Push和Pull就好了，这个仓库就是用来同步用的"
+
+### Setting Up Bidirectional Sync
+
+Create a sync script at `~/.hermes/scripts/sync-skills.sh`:
+
+```bash
+#!/bin/bash
+set -e
+SKILLS_DIR="$HOME/.hermes/profiles/hermes-default/skills/software-development"
+cd "$SKILLS_DIR"
+echo "[sync-skills] $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# Pull remote first
+git fetch origin main
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git rev-parse origin/main)
+if [ "$LOCAL" != "$REMOTE" ]; then
+    echo "[sync-skills] Pulling remote changes..."
+    git pull --rebase origin main
+fi
+# Push local commits
+UNPUSHED=$(git rev-list origin/main..HEAD --count)
+if [ "$UNPUSHED" -gt 0 ]; then
+    echo "[sync-skills] Pushing $UNPUSHED local commit(s)..."
+    git push origin main
+fi
+echo "[sync-skills] Done."
+```
+
+Then create a cron job via `cronjob` tool: `no_agent=true, script="sync-skills.sh", schedule="every 5m"`. The script must live under `~/.hermes/scripts/` (cron enforces this). Keep a copy in the repo for versioning.
+
 ## Common Pitfalls
 
 - **Name mismatch on delete**: displayed name ≠ SKILL.md name → check frontmatter
-- **Git restore after delete**: switching branches restores deleted files → commit first
+- **Git restore after delete**: switching branches restores deleted files → commit first before changing branches
 - **Plugin/global skills can't be deleted from profile**: some skills live outside the profile directory
+- **Never branch/PR on sync repos**: the user uses the repo only for sync — direct push to main only, no branching, no PRs
