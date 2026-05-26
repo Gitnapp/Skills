@@ -1,0 +1,7 @@
+{
+  "source": "https://api.tikhub.io/openapi.json",
+  "version": "\n----\n\n#### 📋 Release Information/发布信息\n- **🔢 Version/版本**: `V5.3.2`\n- **🕒 Update Time/更新时间**: `2026-05-17`\n- **🖥️ Environment/环境**: `Production`\n- **🔗 Base URL/基础路径**: `https://api.tikhub.io`\n\n#### 🌐 Basic HTTP Setup/基本HTTP设置\n- **📝 HTTP Method/请求方法**: `GET`、`POST`\n- **🔄 Retry on Error/错误重试**: `Max Retry: 3`\n- **⏱️ Timeout/超时**: `>=30s and <=60s`\n- **⚡ Rate Limit/速率限制**: `QPS: 10/Second`\n\n----\n\n📢 **重要提醒：域名访问优化（适用于中国大陆用户）**\n\n由于主域名 `api.tikhub.io` 在中国大陆被长城防火墙拦截，**请中国大陆用户改用新域名进行请求**：\n\n* 🇨🇳 **大陆用户请使用",
+  "endpoint_count": 1123,
+  "tag_count": 54,
+  "generated_at": "2026-05-22T00:01:11.465642"
+}

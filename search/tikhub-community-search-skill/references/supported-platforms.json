@@ -1,0 +1,256 @@
+[
+  {
+    "platform": "Demo",
+    "tags": [
+      "Demo-API"
+    ],
+    "endpoint_count": 9,
+    "search_endpoint_count": 7,
+    "scopes": []
+  },
+  {
+    "platform": "Health Check",
+    "tags": [
+      "Health-Check"
+    ],
+    "endpoint_count": 1,
+    "search_endpoint_count": 0,
+    "scopes": []
+  },
+  {
+    "platform": "Instagram",
+    "tags": [
+      "Instagram-V1-API",
+      "Instagram-V2-API",
+      "Instagram-V3-API"
+    ],
+    "endpoint_count": 88,
+    "search_endpoint_count": 88,
+    "scopes": []
+  },
+  {
+    "platform": "Lemon8",
+    "tags": [
+      "Lemon8-App-API"
+    ],
+    "endpoint_count": 16,
+    "search_endpoint_count": 16,
+    "scopes": []
+  },
+  {
+    "platform": "LinkedIn",
+    "tags": [
+      "LinkedIn-Web-API",
+      "LinkedIn-Web-V2-API"
+    ],
+    "endpoint_count": 85,
+    "search_endpoint_count": 77,
+    "scopes": []
+  },
+  {
+    "platform": "Reddit",
+    "tags": [
+      "Reddit-APP-API"
+    ],
+    "endpoint_count": 24,
+    "search_endpoint_count": 22,
+    "scopes": []
+  },
+  {
+    "platform": "Sora2",
+    "tags": [
+      "Sora2-API"
+    ],
+    "endpoint_count": 17,
+    "search_endpoint_count": 17,
+    "scopes": []
+  },
+  {
+    "platform": "Threads",
+    "tags": [
+      "Threads-Web-API"
+    ],
+    "endpoint_count": 11,
+    "search_endpoint_count": 11,
+    "scopes": []
+  },
+  {
+    "platform": "TikHub",
+    "tags": [
+      "TikHub-Downloader-API",
+      "TikHub-User-API"
+    ],
+    "endpoint_count": 8,
+    "search_endpoint_count": 8,
+    "scopes": []
+  },
+  {
+    "platform": "TikTok",
+    "tags": [
+      "TikTok-Web-API",
+      "TikTok-App-V3-API",
+      "TikTok-Creator-API",
+      "TikTok-Analytics-API",
+      "TikTok-Ads-API",
+      "TikTok-Shop-Web-API",
+      "TikTok-Interaction-API"
+    ],
+    "endpoint_count": 204,
+    "search_endpoint_count": 187,
+    "scopes": []
+  },
+  {
+    "platform": "Twitter/X",
+    "tags": [
+      "Twitter-Web-API"
+    ],
+    "endpoint_count": 13,
+    "search_endpoint_count": 12,
+    "scopes": []
+  },
+  {
+    "platform": "YouTube",
+    "tags": [
+      "YouTube-Web-API",
+      "YouTube-Web-V2-API"
+    ],
+    "endpoint_count": 45,
+    "search_endpoint_count": 43,
+    "scopes": []
+  },
+  {
+    "platform": "iOS Shortcut",
+    "tags": [
+      "iOS-Shortcut"
+    ],
+    "endpoint_count": 1,
+    "search_endpoint_count": 0,
+    "scopes": []
+  },
+  {
+    "platform": "临时邮箱 / Temp Mail",
+    "tags": [
+      "Temp-Mail-API"
+    ],
+    "endpoint_count": 3,
+    "search_endpoint_count": 1,
+    "scopes": []
+  },
+  {
+    "platform": "今日头条 / Toutiao",
+    "tags": [
+      "Toutiao-Web-API",
+      "Toutiao-App-API"
+    ],
+    "endpoint_count": 7,
+    "search_endpoint_count": 7,
+    "scopes": []
+  },
+  {
+    "platform": "哔哩哔哩 / Bilibili",
+    "tags": [
+      "Bilibili-Web-API",
+      "Bilibili-App-API"
+    ],
+    "endpoint_count": 41,
+    "search_endpoint_count": 36,
+    "scopes": []
+  },
+  {
+    "platform": "小红书 / Xiaohongshu",
+    "tags": [
+      "Xiaohongshu-Web-V3-API",
+      "Xiaohongshu-App-V2-API",
+      "Xiaohongshu-App-API",
+      "Xiaohongshu-Web-V2-API",
+      "Xiaohongshu-Web-API"
+    ],
+    "endpoint_count": 79,
+    "search_endpoint_count": 79,
+    "scopes": []
+  },
+  {
+    "platform": "微信 / WeChat",
+    "tags": [
+      "WeChat-Media-Platform-Web-API",
+      "WeChat-Channels-API"
+    ],
+    "endpoint_count": 24,
+    "search_endpoint_count": 19,
+    "scopes": []
+  },
+  {
+    "platform": "微博 / Weibo",
+    "tags": [
+      "Weibo-Web-API",
+      "Weibo-Web-V2-API",
+      "Weibo-App-API"
+    ],
+    "endpoint_count": 64,
+    "search_endpoint_count": 64,
+    "scopes": []
+  },
+  {
+    "platform": "快手 / Kuaishou",
+    "tags": [
+      "Kuaishou-Web-API",
+      "Kuaishou-App-API"
+    ],
+    "endpoint_count": 33,
+    "search_endpoint_count": 32,
+    "scopes": []
+  },
+  {
+    "platform": "抖音 / Douyin",
+    "tags": [
+      "Douyin-Web-API",
+      "Douyin-App-V3-API",
+      "Douyin-Creator-API",
+      "Douyin-Creator-V2-API",
+      "Douyin-Index-API",
+      "Douyin-Search-API",
+      "Douyin-Billboard-API",
+      "Douyin-Xingtu-API",
+      "Douyin-Xingtu-V2-API"
+    ],
+    "endpoint_count": 291,
+    "search_endpoint_count": 274,
+    "scopes": []
+  },
+  {
+    "platform": "混合解析 / Hybrid Parsing",
+    "tags": [
+      "Hybrid-Parsing"
+    ],
+    "endpoint_count": 1,
+    "search_endpoint_count": 1,
+    "scopes": []
+  },
+  {
+    "platform": "皮皮虾 / PiPiXia",
+    "tags": [
+      "PiPiXia-App-API"
+    ],
+    "endpoint_count": 17,
+    "search_endpoint_count": 16,
+    "scopes": []
+  },
+  {
+    "platform": "知乎 / Zhihu",
+    "tags": [
+      "Zhihu-Web-API"
+    ],
+    "endpoint_count": 34,
+    "search_endpoint_count": 30,
+    "scopes": []
+  },
+  {
+    "platform": "西瓜视频 / Xigua",
+    "tags": [
+      "Xigua-App-V2-API"
+    ],
+    "endpoint_count": 7,
+    "search_endpoint_count": 7,
+    "scopes": []
+  }
+]
