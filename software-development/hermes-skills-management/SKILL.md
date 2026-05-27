@@ -68,90 +68,93 @@ The user's explicit rule: "不要创建分支，不要创建PR，直接Push和Pu
 
 ### Setting Up Bidirectional Sync
 
-Create a sync script at `~/.hermes/scripts/sync-skills.sh`:
+Create a sync script at `~/.hermes/scripts/sync-skills.sh`. Uses `git merge` with YAML semantic merge driver for `*.yaml` files (no more rebase, no more conflict markers):
 
 ```bash
 #!/bin/bash
 set -e
 SKILLS_DIR="$HOME/.hermes/profiles/hermes-default/skills/software-development"
 cd "$SKILLS_DIR"
-echo "[sync-skills] $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-# Pull remote first
+git add -A && ! git diff --cached --quiet && git commit -m "sync: auto-commit"
 git fetch origin main
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse origin/main)
-if [ "$LOCAL" != "$REMOTE" ]; then
-    echo "[sync-skills] Pulling remote changes..."
-    git pull --rebase origin main
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+    git merge origin/main -m "sync: auto-merge" || true
 fi
-# Push local commits
 UNPUSHED=$(git rev-list origin/main..HEAD --count)
-if [ "$UNPUSHED" -gt 0 ]; then
-    echo "[sync-skills] Pushing $UNPUSHED local commit(s)..."
-    git push origin main
-fi
-echo "[sync-skills] Done."
+[ "$UNPUSHED" -gt 0 ] && git push origin main
 ```
 
 Then create a cron job via `cronjob` tool: `no_agent=true, script="sync-skills.sh", schedule="every 5m"`. **The script must live under the profile's scripts directory** (`~/.hermes/profiles/<profile>/scripts/`), NOT `~/.hermes/scripts/`. Cron resolves script paths relative to the active profile and blocks symlinks pointing outside. Copy scripts, don't symlink.
 
-## Advanced Sync: Conflict Handling with Hermes Takeover
+## Advanced Sync: YAML Smart Merge (No Conflicts)
 
 Full sync script at `~/.hermes/scripts/sync-skills.sh` (and versioned in the repo):
 
 ```bash
 #!/bin/bash
+# Bi-directional sync for Gitnapp/Skills repo
+# Uses YAML semantic merge driver for *.yaml files
 set -eo pipefail
+
 SKILLS_DIR="$HOME/.hermes/profiles/hermes-default/skills/software-development"
-CONFLICT_FILE="$HOME/.hermes/skills/.sync-conflict"
+MERGE_DRIVER="$HOME/.hermes/scripts/yaml-merge-driver.py"
 cd "$SKILLS_DIR"
 
-# Check for pending conflict flag (avoid stomping on Hermes mid-resolution)
-[ -f "$CONFLICT_FILE" ] && echo "[sync-skills] Pending conflict, deferring..." && exit 0
+# Clean up old conflict flag
+rm -f "$HOME/.hermes/skills/.sync-conflict"
 
-# 1. Stash uncommitted changes
-git add -A
-if ! git diff --cached --quiet; then
-    git stash push -m "sync-skills auto-stash $(date -u +%Y%m%dT%H%M%S)"
+# Ensure YAML merge driver is configured
+if ! git config merge.yaml-merge.driver >/dev/null 2>&1; then
+    git config merge.yaml-merge.name "YAML semantic merge driver"
+    git config merge.yaml-merge.driver "python3 $MERGE_DRIVER %O %A %B %P"
 fi
 
-# 2. Pull with -X theirs (auto-resolve trivial conflicts, prefer remote)
+if [ ! -f .gitattributes ] || ! grep -q "merge=yaml-merge" .gitattributes 2>/dev/null; then
+    echo "*.yaml merge=yaml-merge" >> .gitattributes
+    git add .gitattributes 2>/dev/null || true
+fi
+
+# Phase 1: Commit local changes
+git add -A
+if ! git diff --cached --quiet; then
+    git commit -m "sync: auto-commit $(date -u +%Y%m%dT%H%M%S)"
+fi
+
+# Phase 2: Fetch & merge
 git fetch origin main
-if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
-    if git pull --rebase=merges -X theirs origin main 2>.pull-err; then
-        rm -f .pull-err
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git rev-parse origin/main)
+
+if [ "$LOCAL" != "$REMOTE" ]; then
+    if git merge origin/main -m "sync: auto-merge" 2>/dev/null; then
+        echo "Merge succeeded."
     else
-        # Rebase failed → write conflict report for Hermes
-        git rebase --abort 2>/dev/null || true
-        cat > "$CONFLICT_FILE" <<HEREDOC
-{"type":"rebase_conflict","repo":"$SKILLS_DIR","error":"$(head -20 .pull-err | tr '\n' ' ')"}
-HEREDOC
-        git stash pop 2>/dev/null || true
-        exit 2  # Triggers Hermes takeover
+        echo "Non-YAML conflicts, keeping local..."
+        for f in $(git diff --name-only --diff-filter=U 2>/dev/null); do
+            git checkout --ours -- "$f" 2>/dev/null || true
+            git add "$f" 2>/dev/null || true
+        done
+        git commit -m "sync: auto-merge (conflicts resolved)" 2>/dev/null || true
     fi
 fi
 
-# 3. Restore stash → auto-commit → push
-git stash pop 2>/dev/null && git add -A && git diff --cached --quiet || git commit -m "sync: auto-commit"
-UNPUSHED=$(git rev-list origin/main..HEAD --count)
+# Phase 3: Push
+UNPUSHED=$(git rev-list origin/main..HEAD --count 2>/dev/null || echo 0)
 [ "$UNPUSHED" -gt 0 ] && git push origin main
 ```
 
-### Hermes Conflict Resolver (cron, LLM-driven)
-
-A second cron job runs every 6 minutes (offset from sync) and checks for `~/.hermes/skills/.sync-conflict`:
-
-- `no_agent=false` (Hermes reasons about the conflict)
-- `toolsets=["terminal","file","web"]`
-- Prompt instructs: read conflict report → `git status` + `git log` both sides → merge intelligently (prefer remote, backup local to `.local-backup`) → commit + push → remove flag file
-- If truly stuck, write to `.sync-conflict.unresolved`
+The YAML smart merge driver (`~/.hermes/scripts/yaml-merge-driver.py`) performs 3-way semantic deep merge:
+- Both sides' new dict keys are preserved (no data loss)
+- Conflicting scalars prefer local
+- No more conflict markers — the driver resolves everything structurally
 
 ### Cron Summary
 
 | Job | Type | Schedule | What it does |
 |-----|------|----------|--------------|
-| `skills-bidirectional-sync` | no_agent (script) | every 5m | pull + push, flag conflicts |
-| `skills-conflict-resolver` | LLM-driven | every 6m | read conflict flag, resolve, commit |
+| `skills-bidirectional-sync` | no_agent (script) | every 5m | commit → merge (YAML driver) → push |
+
+The old `skills-conflict-resolver` cron is **deleted** — conflicts are now auto-resolved by the YAML merge driver.
 
 ## Profile-Level Sync (Entire Profile → GitHub)
 

@@ -1,6 +1,6 @@
 ---
 name: hermes-profile-git-sync
-description: Sync Hermes Agent profiles to private GitHub repos with bidirectional cron jobs — push config, skills, .env to Gitnapp/hermes-{name}, auto-pull remote changes every 5 minutes, Hermes agent takeover on conflicts.
+description: Sync Hermes Agent profiles to private GitHub repos with bidirectional cron jobs — push config, skills, .env to Gitnapp/hermes-profile-{name}, auto-merge remote changes every 5 minutes using YAML semantic merge driver (no conflicts, no takeover needed).
 version: 1.0.0
 author: Hermes Agent
 ---
@@ -62,47 +62,68 @@ git commit -m "init: hermes-{name} profile"
 git push -u origin main
 ```
 
-### 3. Create sync script
+### 3. Create sync script (YAML smart merge driver)
+
+First, deploy the YAML smart merge driver that handles config.yaml conflicts semantically:
+
+```bash
+# The merge driver lives in ~/.hermes/scripts/yaml-merge-driver.py
+# It does 3-way YAML deep-merge: both sides' new keys are kept, conflicting scalars prefer local
+```
 
 Write `~/.hermes/scripts/sync-profile.sh` (shared library):
 
 ```bash
 #!/bin/bash
+# Bi-directional sync for Hermes profile repos
+# Uses YAML semantic merge driver for config.yaml
+# Usage: SYNC_PROFILE=ctf bash sync-profile.sh
 set -eo pipefail
 
 PROFILE="${SYNC_PROFILE:?SYNC_PROFILE not set}"
 PROFILE_DIR="$HOME/.hermes/profiles/$PROFILE"
+MERGE_DRIVER="$HOME/.hermes/scripts/yaml-merge-driver.py"
+
 cd "$PROFILE_DIR"
 
-git add -A
-if ! git diff --cached --quiet; then
-    git stash push -m "sync-profile auto-stash $(date -u +%Y%m%dT%H%M%S)"
+# Configure git merge driver for YAML files
+if ! git config merge.yaml-merge.driver >/dev/null 2>&1; then
+    git config merge.yaml-merge.name "YAML semantic merge driver"
+    git config merge.yaml-merge.driver "python3 $MERGE_DRIVER %O %A %B %P"
 fi
 
+# Configure .gitattributes
+if [ ! -f .gitattributes ] || ! grep -q "merge=yaml-merge" .gitattributes 2>/dev/null; then
+    echo "config.yaml merge=yaml-merge" >> .gitattributes
+    git add .gitattributes 2>/dev/null || true
+fi
+
+# Phase 1: Commit local changes
+git add -A
+if ! git diff --cached --quiet; then
+    git commit -m "sync: auto-commit $(date -u +%Y%m%dT%H%M%S)"
+fi
+
+# Phase 2: Fetch & merge (YAML driver handles config.yaml semantically)
 git fetch origin main
 LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse origin/main)
 
 if [ "$LOCAL" != "$REMOTE" ]; then
-    if git pull --rebase=merges -X theirs origin main 2>&1; then
-        echo "Pull succeeded."
+    if git merge origin/main -m "sync: auto-merge" 2>/dev/null; then
+        echo "Merge succeeded."
     else
-        git rebase --abort 2>/dev/null || true
-        git stash pop 2>/dev/null || true
-        exit 1
+        echo "Non-YAML conflicts, keeping local version..."
+        for f in $(git diff --name-only --diff-filter=U 2>/dev/null); do
+            git checkout --ours -- "$f" 2>/dev/null || true
+            git add "$f" 2>/dev/null || true
+        done
+        git commit -m "sync: auto-merge (conflicts resolved)" 2>/dev/null || true
     fi
 fi
 
-if git stash list | grep -q "sync-profile auto-stash"; then
-    git stash pop 2>&1 || true
-fi
-
-git add -A
-if ! git diff --cached --quiet; then
-    git commit -m "sync: auto-commit from bidirectional sync"
-fi
-
-UNPUSHED=$(git rev-list origin/main..HEAD --count)
+# Phase 3: Push
+UNPUSHED=$(git rev-list origin/main..HEAD --count 2>/dev/null || echo 0)
 if [ "$UNPUSHED" -gt 0 ]; then
     git push origin main
 fi
@@ -136,8 +157,10 @@ hermes cron create "every 5m" --name sync-profile-{name} --script sync-{name}.sh
 
 - **No branches** — always commit and push directly to `main`
 - **No PRs** — repos are sync endpoints, not development repos
-- **Always `git pull --rebase=merges -X theirs` before push** — prefer remote on conflict
+- **Use `git merge` (not rebase) with YAML smart merge driver** — config.yaml is deep-merged semantically: both sides' new keys are preserved, conflicting scalars prefer local. Non-YAML conflicts: local wins.
+- **Configure `.gitattributes`** — `config.yaml merge=yaml-merge` in every sync repo
 - **Use `.gitignore`** to exclude runtime state (state.db, sessions, cache, logs)
+- **Use `git config merge.yaml-merge.driver`** — per-repo, pointing to `~/.hermes/scripts/yaml-merge-driver.py`
 
 ## What Gets Synced
 
@@ -155,21 +178,18 @@ hermes cron create "every 5m" --name sync-profile-{name} --script sync-{name}.sh
 
 ## References
 
-- `references/merge-conflict-recovery.md` — recovery steps when `git pull --rebase` leaves conflict markers in config.yaml
+- `references/yaml-merge-driver.md` — how the YAML 3-way deep-merge driver works, with test examples
+- `scripts/sync-profile.sh` — the canonical sync script (used by all profile sync cron jobs)
+- `scripts/yaml-merge-driver.py` — Python merge driver for config.yaml semantic merging
 
 ## Pitfalls
 
-- **Never edit a profile repo's config.yaml on GitHub** — the local Hermes instance is the source of truth. GitHub edits will be overwritten on next sync.
-- **Check .env before pushing** — confirm no production secrets are exposed. Use `hermes config env-path` to locate.
+- **config.yaml merge is now semantic** — YAML driver deep-merges dicts from both sides. New keys from both branches survive. Don't manually "resolve" config.yaml conflicts — the driver handles them.
+- **Non-YAML conflicts keep local** — if SKILL.md or other files conflict, the sync script auto-resolves to the local version. Manual review may still be needed for complex structural conflicts in non-YAML files.
+- **Merge driver must be in git config** — each sync repo needs `git config merge.yaml-merge.driver` pointing to the Python driver. The sync script auto-configures this on first run, but if it fails, run manually.
+- **.gitattributes is required** — without `config.yaml merge=yaml-merge` in `.gitattributes`, git falls back to line-based merge for config.yaml and will produce conflict markers.
+- **Cron script path is profile-scoped** — `no_agent` cron jobs resolve scripts relative to `~/.hermes/profiles/<profile>/scripts/`, NOT `~/.hermes/scripts/`. Symlinks pointing outside the profile scripts dir are blocked. Always copy scripts into the profile scripts dir.
+- **Dual-location maintenance** — canonical scripts live in `~/.hermes/scripts/` and are copied to profile scripts dirs. After editing the canonical, re-copy to all profile dirs.
+- **Never edit a profile repo's config.yaml on GitHub** — the local Hermes instance is the source of truth. GitHub edits will be merged back (semantically), but expect surprises if both sides edit the same key.
 - **First git init can be large** — skills directories contain many files. Expect 300-600 files in initial commit.
-- **Cron script path is profile-scoped** — `no_agent` cron jobs resolve scripts relative to `~/.hermes/profiles/<profile>/scripts/`, NOT `~/.hermes/scripts/`. Symlinks to outside paths are blocked. Always copy scripts into the profile scripts dir.
-- **Dual-location maintenance** — if you keep canonical scripts in `~/.hermes/scripts/` and copy them to profile dirs, remember to re-copy after edits. Consider making the profile scripts dir the single source of truth.
-- **`rebase=merges -X theirs` can still leave conflict markers** — the `-X theirs` strategy resolves content-level conflicts but structural conflicts (e.g., same provider block defined differently in both histories) can leave `<<<<<<<` / `=======` / `>>>>>>>` markers embedded in the file. When this happens, the config becomes invalid YAML. Fix with a Python regex that strips conflict markers and keeps the "ours" (stashed) side:
-  ```python
-  import re
-  raw = open('config.yaml').read()
-  raw = re.sub(r'<<<<<<<[ \w]+\n(.*?)\n=======\n(.*?)\n>>>>>>>[ \w]+\n',
-               lambda m: m.group(2), raw, flags=re.DOTALL)
-  open('config.yaml', 'w').write(raw)
-  ```
-  Then manually rebuild any malformed YAML blocks. The `skills-conflict-resolver` cron job watches for `~/.hermes/skills/.sync-conflict` flag files but may not catch config-level conflicts — check all profile configs with `grep -rn "<<<<<<" ~/.hermes/profiles/*/config.yaml` after a sync cycle.
+- **Check .env before pushing** — confirm no production secrets are exposed. Use `hermes config env-path` to locate.
