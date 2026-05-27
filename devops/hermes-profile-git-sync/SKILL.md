@@ -1,0 +1,150 @@
+---
+name: hermes-profile-git-sync
+description: Sync Hermes Agent profiles to private GitHub repos with bidirectional cron jobs — push config, skills, .env to Gitnapp/hermes-{name}, auto-pull remote changes every 5 minutes, Hermes agent takeover on conflicts.
+version: 1.0.0
+author: Hermes Agent
+---
+
+# Hermes Profile Git Sync
+
+Sync Hermes profile configurations to GitHub repos for backup and cross-machine portability. Each profile gets its own private repo `hermes-{profile-name}` with bidirectional syncing via cron jobs.
+
+## Trigger
+
+Use when the user wants to:
+- Sync Hermes profiles to GitHub
+- Set up bidirectional profile sync
+- Backup/restore Hermes profile configs across machines
+
+## Setup (per profile)
+
+### 1. Create GitHub repo
+
+```bash
+gh repo create Gitnapp/hermes-{name} --private -d "Hermes profile: {name}" --push=false
+```
+
+### 2. Init git in profile directory
+
+```bash
+cd ~/.hermes/profiles/{name}
+
+cat > .gitignore <<'EOF'
+# Runtime state
+state.db*
+*.log
+*.lock
+*.pid
+cache/
+audio_cache/
+image_cache/
+context_length_cache.yaml
+models_dev_cache.json
+ollama_cloud_models_cache.json
+sessions/
+sandboxes/
+interrupt_debug.log
+processes.json
+pasties/
+workspace/
+bin/
+pairing/
+auth.lock
+hooks/
+skins/
+home/
+EOF
+
+git init
+git remote add origin https://github.com/Gitnapp/hermes-{name}.git
+git add .gitignore config.yaml .env skills/ AGENTS.md SOUL.md profile.yaml plans/ memories/ 2>/dev/null
+git commit -m "init: hermes-{name} profile"
+git push -u origin main
+```
+
+### 3. Create sync script
+
+Write `~/.hermes/scripts/sync-profile.sh` (shared library):
+
+```bash
+#!/bin/bash
+set -eo pipefail
+
+PROFILE="${SYNC_PROFILE:?SYNC_PROFILE not set}"
+PROFILE_DIR="$HOME/.hermes/profiles/$PROFILE"
+cd "$PROFILE_DIR"
+
+git add -A
+if ! git diff --cached --quiet; then
+    git stash push -m "sync-profile auto-stash $(date -u +%Y%m%dT%H%M%S)"
+fi
+
+git fetch origin main
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git rev-parse origin/main)
+
+if [ "$LOCAL" != "$REMOTE" ]; then
+    if git pull --rebase=merges -X theirs origin main 2>&1; then
+        echo "Pull succeeded."
+    else
+        git rebase --abort 2>/dev/null || true
+        git stash pop 2>/dev/null || true
+        exit 1
+    fi
+fi
+
+if git stash list | grep -q "sync-profile auto-stash"; then
+    git stash pop 2>&1 || true
+fi
+
+git add -A
+if ! git diff --cached --quiet; then
+    git commit -m "sync: auto-commit from bidirectional sync"
+fi
+
+UNPUSHED=$(git rev-list origin/main..HEAD --count)
+if [ "$UNPUSHED" -gt 0 ]; then
+    git push origin main
+fi
+```
+
+Per-profile wrapper (e.g., `~/.hermes/scripts/sync-ctf.sh`):
+
+```bash
+#!/bin/bash
+export SYNC_PROFILE=ctf
+exec bash /Users/admin/.hermes/scripts/sync-profile.sh
+```
+
+### 4. Register cron job (no_agent)
+
+```bash
+hermes cron create "every 5m" --name sync-profile-{name} --script sync-{name}.sh --no-agent
+```
+
+## Git Workflow Rules
+
+- **No branches** — always commit and push directly to `main`
+- **No PRs** — repos are sync endpoints, not development repos
+- **Always `git pull --rebase=merges -X theirs` before push** — prefer remote on conflict
+- **Use `.gitignore`** to exclude runtime state (state.db, sessions, cache, logs)
+
+## What Gets Synced
+
+| Include | Exclude |
+|---------|---------|
+| config.yaml | state.db (SQLite runtime) |
+| .env | sessions/ |
+| skills/ | sandboxes/ |
+| AGENTS.md | cache/ |
+| SOUL.md | logs/ |
+| profile.yaml | workspace/ |
+| memories/ | skins/ |
+| plans/ | hooks/ |
+|  | pairing/ |
+
+## Pitfalls
+
+- **Never edit a profile repo's config.yaml on GitHub** — the local Hermes instance is the source of truth. GitHub edits will be overwritten on next sync.
+- **Check .env before pushing** — confirm no production secrets are exposed. Use `hermes config env-path` to locate.
+- **First git init can be large** — skills directories contain many files. Expect 300-600 files in initial commit.
