@@ -93,7 +93,7 @@ fi
 echo "[sync-skills] Done."
 ```
 
-Then create a cron job via `cronjob` tool: `no_agent=true, script="sync-skills.sh", schedule="every 5m"`. The script must live under `~/.hermes/scripts/` (cron enforces this). Keep a copy in the repo for versioning.
+Then create a cron job via `cronjob` tool: `no_agent=true, script="sync-skills.sh", schedule="every 5m"`. **The script must live under the profile's scripts directory** (`~/.hermes/profiles/<profile>/scripts/`), NOT `~/.hermes/scripts/`. Cron resolves script paths relative to the active profile and blocks symlinks pointing outside. Copy scripts, don't symlink.
 
 ## Advanced Sync: Conflict Handling with Hermes Takeover
 

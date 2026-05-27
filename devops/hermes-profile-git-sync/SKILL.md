@@ -118,9 +118,19 @@ exec bash /Users/admin/.hermes/scripts/sync-profile.sh
 
 ### 4. Register cron job (no_agent)
 
+**Copy** (not symlink) the sync scripts into the profile's scripts directory:
+
+```bash
+cp ~/.hermes/scripts/sync-{name}.sh ~/.hermes/profiles/<profile>/scripts/
+chmod +x ~/.hermes/profiles/<profile>/scripts/sync-{name}.sh
+```
+
+Then register:
 ```bash
 hermes cron create "every 5m" --name sync-profile-{name} --script sync-{name}.sh --no-agent
 ```
+
+> **Why copy, not symlink?** Cron resolves script paths relative to `~/.hermes/profiles/<profile>/scripts/` and **blocks any symlink that resolves outside that directory** ("Blocked: script path resolves outside the scripts directory"). Symlinks will silently fail with a path-resolution error.
 
 ## Git Workflow Rules
 
