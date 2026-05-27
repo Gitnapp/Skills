@@ -153,6 +153,10 @@ hermes cron create "every 5m" --name sync-profile-{name} --script sync-{name}.sh
 | plans/ | hooks/ |
 |  | pairing/ |
 
+## References
+
+- `references/merge-conflict-recovery.md` — recovery steps when `git pull --rebase` leaves conflict markers in config.yaml
+
 ## Pitfalls
 
 - **Never edit a profile repo's config.yaml on GitHub** — the local Hermes instance is the source of truth. GitHub edits will be overwritten on next sync.
@@ -160,3 +164,12 @@ hermes cron create "every 5m" --name sync-profile-{name} --script sync-{name}.sh
 - **First git init can be large** — skills directories contain many files. Expect 300-600 files in initial commit.
 - **Cron script path is profile-scoped** — `no_agent` cron jobs resolve scripts relative to `~/.hermes/profiles/<profile>/scripts/`, NOT `~/.hermes/scripts/`. Symlinks to outside paths are blocked. Always copy scripts into the profile scripts dir.
 - **Dual-location maintenance** — if you keep canonical scripts in `~/.hermes/scripts/` and copy them to profile dirs, remember to re-copy after edits. Consider making the profile scripts dir the single source of truth.
+- **`rebase=merges -X theirs` can still leave conflict markers** — the `-X theirs` strategy resolves content-level conflicts but structural conflicts (e.g., same provider block defined differently in both histories) can leave `<<<<<<<` / `=======` / `>>>>>>>` markers embedded in the file. When this happens, the config becomes invalid YAML. Fix with a Python regex that strips conflict markers and keeps the "ours" (stashed) side:
+  ```python
+  import re
+  raw = open('config.yaml').read()
+  raw = re.sub(r'<<<<<<<[ \w]+\n(.*?)\n=======\n(.*?)\n>>>>>>>[ \w]+\n',
+               lambda m: m.group(2), raw, flags=re.DOTALL)
+  open('config.yaml', 'w').write(raw)
+  ```
+  Then manually rebuild any malformed YAML blocks. The `skills-conflict-resolver` cron job watches for `~/.hermes/skills/.sync-conflict` flag files but may not catch config-level conflicts — check all profile configs with `grep -rn "<<<<<<" ~/.hermes/profiles/*/config.yaml` after a sync cycle.

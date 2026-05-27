@@ -157,3 +157,5 @@ done
 - **Don't use sed for multi-line YAML** — sed is line-oriented and fragile for block replacement. Python regex with DOTALL is reliable.
 - **hermes-default is usually the source of truth** — it gets updated first via `hermes config set`, then other profiles are batch-synced from it.
 - **Old .env keys are harmless but clutter** — leaving DEEPSEEK_API_KEY after migrating to yunwu won't break anything, but cleaning up avoids confusion.
+- **`hermes config set` treats dots as nesting separators** — model names with dots like `mimo-v2.5-pro` will be split into nested YAML keys (`mimo-v2:` → `5-pro:`). Use Python/yaml.dump instead for provider blocks with dotted model names. A simple wrapper: `python3 -c "import yaml; config=yaml.safe_load(open('config.yaml')); config['providers']['yunwu']={...}; yaml.dump(config, open('config.yaml','w'), sort_keys=False)"`. Install pyyaml first: `pip3 install pyyaml`.
+- **`hermes config set` writes to the active profile's config.yaml** (e.g., `~/.hermes/profiles/hermes-default/config.yaml`), NOT the top-level `~/.hermes/config.yaml`. When running under a named profile, always check which file was actually modified.
