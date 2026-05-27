@@ -158,3 +158,5 @@ hermes cron create "every 5m" --name sync-profile-{name} --script sync-{name}.sh
 - **Never edit a profile repo's config.yaml on GitHub** — the local Hermes instance is the source of truth. GitHub edits will be overwritten on next sync.
 - **Check .env before pushing** — confirm no production secrets are exposed. Use `hermes config env-path` to locate.
 - **First git init can be large** — skills directories contain many files. Expect 300-600 files in initial commit.
+- **Cron script path is profile-scoped** — `no_agent` cron jobs resolve scripts relative to `~/.hermes/profiles/<profile>/scripts/`, NOT `~/.hermes/scripts/`. Symlinks to outside paths are blocked. Always copy scripts into the profile scripts dir.
+- **Dual-location maintenance** — if you keep canonical scripts in `~/.hermes/scripts/` and copy them to profile dirs, remember to re-copy after edits. Consider making the profile scripts dir the single source of truth.
