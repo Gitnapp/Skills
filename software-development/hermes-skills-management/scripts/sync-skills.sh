@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bi-directional sync for Gitnapp/Skills repo
-# Uses YAML semantic merge driver for *.yaml files
+# Uses YAML semantic merge driver for config.yaml
 set -eo pipefail
 
 SKILLS_DIR="$HOME/.hermes/profiles/hermes-default/skills/software-development"
@@ -11,7 +11,7 @@ cd "$SKILLS_DIR"
 
 echo "[sync-skills] $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Clean up old conflict flag (legacy)
+# Clean up old conflict flag
 rm -f "$CONFLICT_FILE"
 
 # Ensure YAML merge driver is configured for this repo

@@ -153,8 +153,53 @@ The YAML smart merge driver (`~/.hermes/scripts/yaml-merge-driver.py`) performs 
 | Job | Type | Schedule | What it does |
 |-----|------|----------|--------------|
 | `skills-bidirectional-sync` | no_agent (script) | every 5m | commit → merge (YAML driver) → push |
+| `sync-profile-{name}` × N | no_agent (script) | every 5m | per-profile config + skills sync (YAML driver) |
+| `env-health-guard` | no_agent (script) | every 60m | .env health check + auto-recovery from snapshots |
 
 The old `skills-conflict-resolver` cron is **deleted** — conflicts are now auto-resolved by the YAML merge driver.
+
+## .env Health Guard
+
+Deploy `~/.hermes/scripts/env-guard.sh` to monitor .env integrity and auto-recover:
+
+```bash
+#!/bin/bash
+# Check .env health: missing, too small (<100 bytes), or symlink loop → restore from latest snapshot
+set -eo pipefail
+
+ENV_PATH="$HOME/.hermes/profiles/hermes-default/.env"
+SNAPSHOT_DIR="$HOME/.hermes/profiles/hermes-default/state-snapshots"
+
+# Detect if .env is a self-referencing symlink loop
+if [ -L "$ENV_PATH" ]; then
+    ENV_REAL=$(python3 -c "import os; print(os.path.realpath(os.path.expanduser('$ENV_PATH')))" 2>/dev/null)
+    if [ "$ENV_REAL" = "$ENV_PATH" ]; then
+        echo "SYMLINK LOOP DETECTED: $ENV_PATH -> itself"; BROKEN=true
+    elif [ ! -f "$ENV_REAL" ]; then
+        echo "BROKEN SYMLINK: $ENV_PATH -> $ENV_REAL (missing)"; BROKEN=true
+    fi
+elif [ ! -f "$ENV_PATH" ]; then
+    echo "MISSING: $ENV_PATH"; BROKEN=true
+else
+    SIZE=$(wc -c < "$ENV_PATH" 2>/dev/null || echo 0)
+    [ "$SIZE" -lt 100 ] && { echo "TOO SMALL: $ENV_PATH ($SIZE bytes)"; BROKEN=true; }
+fi
+
+if [ "${BROKEN:-false}" = true ]; then
+    LATEST=$(ls -td "$SNAPSHOT_DIR"/*/ 2>/dev/null | head -1)
+    [ -z "$LATEST" ] && { echo "FATAL: No snapshots found"; exit 1; }
+    SNAPSHOT_ENV="$LATEST.env"
+    [ ! -f "$SNAPSHOT_ENV" ] && { echo "FATAL: Snapshot not found at $SNAPSHOT_ENV"; exit 1; }
+    cp "$SNAPSHOT_ENV" "$ENV_PATH" && chmod 600 "$ENV_PATH"
+    [ -L "$HOME/.hermes/.env" ] && rm -f "$HOME/.hermes/.env"
+    [ ! -f "$HOME/.hermes/.env" ] && ln -sf "$ENV_PATH" "$HOME/.hermes/.env"
+    echo ".env recovered ($(wc -c < "$ENV_PATH") bytes)"
+else
+    echo ".env healthy ($(wc -c < "$ENV_PATH") bytes)"
+fi
+```
+
+Register as `no_agent` cron: `every 1h`, script `env-guard.sh`.
 
 ## Profile-Level Sync (Entire Profile → GitHub)
 
@@ -206,12 +251,37 @@ bin/
 # Pairing
 pairing/
 auth.lock
+auth.json
+
+# Memories
+memories/
+
+# Hermes runtime
+.hermes_history
+.update_check
 
 # Hooks (may contain secrets)
 hooks/
 
 # Skins (visual only)
 skins/
+
+# Gateway state
+gateway.lock
+gateway.pid
+gateway_state.json
+channel_directory.json
+
+# Cron runtime
+cron/.tick.lock
+cron/output/
+cron/jobs.json
+
+# LSP (auto-installed)
+lsp/
+
+# State snapshots (too heavy for git)
+state-snapshots/
 
 # Home (symlinks)
 home/
@@ -268,6 +338,8 @@ If .env was pushed in plaintext before encryption was added, use `git-filter-rep
 - **Git restore after delete**: switching branches restores deleted files → commit first before changing branches
 - **Plugin/global skills can't be deleted from profile**: some skills live outside the profile directory
 - **Never branch/PR on sync repos**: the user uses the repo only for sync — direct push to main only, no branching, no PRs
+- **Use HTTPS remotes, never SSH**: cron runs without SSH agent. `git@github.com:` remotes fail with "Permission denied (publickey)". Always use `https://github.com/...`. Fix: `git remote set-url origin https://github.com/Gitnapp/...`.
+- **.env corruption via sync**: if .env is committed (especially as a symlink), it can become a self-referencing loop. Always add `.env` to `.gitignore`. Deploy `env-guard.sh` (see .env Health Guard section above) for hourly auto-recovery. Manual recovery: `cp ~/.hermes/profiles/hermes-default/state-snapshots/<latest>/.env ~/.hermes/profiles/hermes-default/.env`.
 - **.env encryption method**: user's default is Bitwarden + base64 (see `references/bitwarden-env-pattern.md`). Do NOT default to git-crypt — only use it if explicitly requested. If unsure, ask.
 - **Plaintext .env in history**: if .env was pushed before encryption, rewrite history with `git-filter-repo` to remove secrets from all commits
 - **Check for existing patterns first**: before choosing a tool/approach (encryption, sync, naming), check if the user has an established pattern in other profiles or prior sessions. Reusing existing patterns avoids rework and user frustration.

@@ -1,7 +1,7 @@
 ---
 name: hermes-profile-git-sync
 description: Sync Hermes Agent profiles to private GitHub repos with bidirectional cron jobs — push config, skills to Gitnapp/hermes-profile-{name}, auto-merge remote changes every 5 minutes using YAML semantic merge driver (no conflicts, no takeover needed). .env is gitignored (secrets).
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 ---
 
@@ -38,26 +38,67 @@ state.db*
 *.log
 *.lock
 *.pid
+
+# Cache
 cache/
 audio_cache/
 image_cache/
 context_length_cache.yaml
 models_dev_cache.json
 ollama_cloud_models_cache.json
+
+# Sessions
 sessions/
 sandboxes/
+
+# Temp/transient
 interrupt_debug.log
 processes.json
 pasties/
+
+# Workspace
 workspace/
+
+# Binaries
 bin/
+
+# Pairing
 pairing/
 auth.lock
+auth.json
+
+# Memories
+memories/
+
+# Hermes runtime
+.hermes_history
+.update_check
+
+# Hooks (may contain secrets)
 hooks/
+
+# Skins (visual only)
 skins/
-home/
+
+# Gateway state
+gateway.lock
+gateway.pid
+gateway_state.json
+channel_directory.json
+
+# Cron runtime
+cron/.tick.lock
 cron/output/
+cron/jobs.json
+
+# LSP (auto-installed)
 lsp/
+
+# State snapshots (too heavy for git)
+state-snapshots/
+
+# Home (symlinks)
+home/
 EOF
 
 git init
@@ -88,6 +129,22 @@ set -eo pipefail
 PROFILE="${SYNC_PROFILE:?SYNC_PROFILE not set}"
 PROFILE_DIR="$HOME/.hermes/profiles/$PROFILE"
 MERGE_DRIVER="$HOME/.hermes/scripts/yaml-merge-driver.py"
+
+# --- Pre-flight: .env health check ---
+check_env() {
+    local env_path="$1"
+    if [ ! -f "$env_path" ] || [ ! -r "$env_path" ]; then
+        echo "FATAL: .env missing or unreadable at $env_path"; return 1
+    fi
+    local size=$(wc -c < "$env_path" 2>/dev/null || echo 0)
+    if [ "$size" -lt 100 ]; then
+        echo "FATAL: .env suspiciously small ($size bytes), refusing to sync"; return 1
+    fi
+    return 0
+}
+ENV_PATH="$PROFILE_DIR/.env"
+[ -L "$ENV_PATH" ] && ENV_PATH=$(readlink -f "$ENV_PATH" 2>/dev/null || echo "$ENV_PATH")
+check_env "$ENV_PATH" || exit 3
 
 cd "$PROFILE_DIR"
 
@@ -203,3 +260,5 @@ hermes cron create "every 5m" --name sync-profile-{name} --script sync-{name}.sh
 - **Dual-location maintenance** — canonical scripts live in `~/.hermes/scripts/` and are copied to profile scripts dirs. After editing the canonical, re-copy to all profile dirs.
 - **Never edit a profile repo's config.yaml on GitHub** — the local Hermes instance is the source of truth. GitHub edits will be merged back (semantically), but expect surprises if both sides edit the same key.
 - **First git init can be large** — skills directories contain many files. Expect 300-600 files in initial commit.
+- **Use HTTPS remotes, never SSH** — cron jobs run without SSH agent, so `git@github.com:` remotes will fail with "Permission denied (publickey)". Always use `https://github.com/...` remotes. To fix a profile that already uses SSH: `git remote set-url origin https://github.com/Gitnapp/hermes-profile-{name}.git`.
+- **.env auto-recovery (env-guard)** — deploy `~/.hermes/scripts/env-guard.sh` that checks .env health hourly and restores from latest state snapshot if corrupted. Register as a `no_agent` cron: `cronjob create "every 1h" --name env-health-guard --script env-guard.sh --no-agent`.

@@ -8,6 +8,27 @@ PROFILE="${SYNC_PROFILE:?SYNC_PROFILE not set}"
 PROFILE_DIR="$HOME/.hermes/profiles/$PROFILE"
 MERGE_DRIVER="$HOME/.hermes/scripts/yaml-merge-driver.py"
 
+# --- Pre-flight: .env health check ---
+check_env() {
+    local env_path="$1"
+    if [ ! -f "$env_path" ] || [ ! -r "$env_path" ]; then
+        echo "[sync-profile:$PROFILE] FATAL: .env missing or unreadable at $env_path"
+        return 1
+    fi
+    local size=$(wc -c < "$env_path" 2>/dev/null || echo 0)
+    if [ "$size" -lt 100 ]; then
+        echo "[sync-profile:$PROFILE] FATAL: .env suspiciously small ($size bytes), refusing to sync"
+        return 1
+    fi
+    return 0
+}
+
+ENV_PATH="$PROFILE_DIR/.env"
+if [ -L "$ENV_PATH" ]; then
+    ENV_PATH=$(readlink -f "$ENV_PATH" 2>/dev/null || echo "$ENV_PATH")
+fi
+check_env "$ENV_PATH" || exit 3
+
 cd "$PROFILE_DIR"
 
 echo "[sync-profile:$PROFILE] $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -43,7 +64,6 @@ else
         echo "[sync-profile:$PROFILE] Merge succeeded."
     else
         echo "[sync-profile:$PROFILE] Non-YAML conflicts detected, keeping local version..."
-        # Resolve remaining non-YAML conflicts: keep local version
         for f in $(git diff --name-only --diff-filter=U 2>/dev/null); do
             echo "  Resolving: $f (local wins)"
             git checkout --ours -- "$f" 2>/dev/null || true
