@@ -1,7 +1,7 @@
 ---
 name: hermes-profile-git-sync
-description: Sync Hermes Agent profiles to private GitHub repos with bidirectional cron jobs — push config, skills, .env to Gitnapp/hermes-profile-{name}, auto-merge remote changes every 5 minutes using YAML semantic merge driver (no conflicts, no takeover needed).
-version: 1.0.0
+description: Sync Hermes Agent profiles to private GitHub repos with bidirectional cron jobs — push config, skills to Gitnapp/hermes-profile-{name}, auto-merge remote changes every 5 minutes using YAML semantic merge driver (no conflicts, no takeover needed). .env is gitignored (secrets).
+version: 1.1.0
 author: Hermes Agent
 ---
 
@@ -30,6 +30,9 @@ gh repo create Gitnapp/hermes-{name} --private -d "Hermes profile: {name}" --pus
 cd ~/.hermes/profiles/{name}
 
 cat > .gitignore <<'EOF'
+# Secrets (CRITICAL: .env MUST be in .gitignore — committed .env gets corrupted)
+.env
+
 # Runtime state
 state.db*
 *.log
@@ -53,11 +56,13 @@ auth.lock
 hooks/
 skins/
 home/
+cron/output/
+lsp/
 EOF
 
 git init
 git remote add origin https://github.com/Gitnapp/hermes-{name}.git
-git add .gitignore config.yaml .env skills/ AGENTS.md SOUL.md profile.yaml plans/ memories/ 2>/dev/null
+git add .gitignore config.yaml skills/ AGENTS.md SOUL.md profile.yaml plans/ memories/ 2>/dev/null
 git commit -m "init: hermes-{name} profile"
 git push -u origin main
 ```
@@ -159,37 +164,42 @@ hermes cron create "every 5m" --name sync-profile-{name} --script sync-{name}.sh
 - **No PRs** — repos are sync endpoints, not development repos
 - **Use `git merge` (not rebase) with YAML smart merge driver** — config.yaml is deep-merged semantically: both sides' new keys are preserved, conflicting scalars prefer local. Non-YAML conflicts: local wins.
 - **Configure `.gitattributes`** — `config.yaml merge=yaml-merge` in every sync repo
-- **Use `.gitignore`** to exclude runtime state (state.db, sessions, cache, logs)
+- **Use `.gitignore`** to exclude runtime state (state.db, sessions, cache, logs). CRITICAL: `.env` MUST be in .gitignore.
 - **Use `git config merge.yaml-merge.driver`** — per-repo, pointing to `~/.hermes/scripts/yaml-merge-driver.py`
 
 ## What Gets Synced
 
 | Include | Exclude |
 |---------|---------|
-| config.yaml | state.db (SQLite runtime) |
-| .env | sessions/ |
-| skills/ | sandboxes/ |
-| AGENTS.md | cache/ |
-| SOUL.md | logs/ |
-| profile.yaml | workspace/ |
-| memories/ | skins/ |
-| plans/ | hooks/ |
+| config.yaml | .env (secrets — MUST be in .gitignore) |
+| skills/ | state.db (SQLite runtime) |
+| AGENTS.md | sessions/ |
+| SOUL.md | sandboxes/ |
+| profile.yaml | cache/ |
+| memories/ | logs/ |
+| plans/ | workspace/ |
+|  | skins/ |
+|  | hooks/ |
 |  | pairing/ |
+|  | cron/output/ |
+|  | lsp/ |
 
 ## References
 
 - `references/yaml-merge-driver.md` — how the YAML 3-way deep-merge driver works, with test examples
+- `references/merge-conflict-recovery.md` — recovering from git merge conflicts
 - `scripts/sync-profile.sh` — the canonical sync script (used by all profile sync cron jobs)
 - `scripts/yaml-merge-driver.py` — Python merge driver for config.yaml semantic merging
 
 ## Pitfalls
 
-- **config.yaml merge is now semantic** — YAML driver deep-merges dicts from both sides. New keys from both branches survive. Don't manually "resolve" config.yaml conflicts — the driver handles them.
+- **.env MUST be in .gitignore** — if .env is committed to git (especially as a symlink), sync may corrupt it into a self-referencing symlink loop: `~/.hermes/.env -> ~/.hermes/profiles/hermes-default/.env -> ~/.hermes/profiles/hermes-default/.env` (points to itself). This destroys all API keys. Always add `.env` to `.gitignore` before first sync. If corrupted, restore from snapshot: `cp ~/.hermes/profiles/hermes-default/state-snapshots/<latest>/.env ~/.hermes/profiles/hermes-default/.env`.
+- **Profile .env files are symlinks** — ctf, finance, ppt, researcher profile `.env` files are symlinks to `hermes-default/.env`. Sync handles these through the hermes-default cron. Do NOT create real .env files in profile subdirectories — they will be out of sync.
+- **config.yaml merge is semantic** — YAML driver deep-merges dicts from both sides. New keys from both branches survive. Don't manually resolve config.yaml conflicts — the driver handles them.
 - **Non-YAML conflicts keep local** — if SKILL.md or other files conflict, the sync script auto-resolves to the local version. Manual review may still be needed for complex structural conflicts in non-YAML files.
-- **Merge driver must be in git config** — each sync repo needs `git config merge.yaml-merge.driver` pointing to the Python driver. The sync script auto-configures this on first run, but if it fails, run manually.
+- **Merge driver must be in git config** — each sync repo needs `git config merge.yaml-merge.driver` pointing to the Python driver. The sync script auto-configures this on first run.
 - **.gitattributes is required** — without `config.yaml merge=yaml-merge` in `.gitattributes`, git falls back to line-based merge for config.yaml and will produce conflict markers.
 - **Cron script path is profile-scoped** — `no_agent` cron jobs resolve scripts relative to `~/.hermes/profiles/<profile>/scripts/`, NOT `~/.hermes/scripts/`. Symlinks pointing outside the profile scripts dir are blocked. Always copy scripts into the profile scripts dir.
 - **Dual-location maintenance** — canonical scripts live in `~/.hermes/scripts/` and are copied to profile scripts dirs. After editing the canonical, re-copy to all profile dirs.
 - **Never edit a profile repo's config.yaml on GitHub** — the local Hermes instance is the source of truth. GitHub edits will be merged back (semantically), but expect surprises if both sides edit the same key.
 - **First git init can be large** — skills directories contain many files. Expect 300-600 files in initial commit.
-- **Check .env before pushing** — confirm no production secrets are exposed. Use `hermes config env-path` to locate.

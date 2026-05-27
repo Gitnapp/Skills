@@ -1,7 +1,6 @@
 # Merge Conflict Recovery for Profile Configs
 
-When `git pull --rebase=merges -X theirs` leaves `<<<<<<<`/`=======`/`>>>>>>>`
-markers in config.yaml, the file becomes invalid YAML. Hermes will fail to load it.
+> **Note:** As of v1.1.0, sync uses `git merge` with YAML smart merge driver instead of `git pull --rebase`. Config.yaml conflicts are resolved semantically — no line-level conflict markers should appear. This reference covers recovery for edge cases where the driver fails or for old repos that haven't been upgraded yet.
 
 ## Detection
 
